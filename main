@@ -1,0 +1,77 @@
+import pandas as pd
+import re
+import nltk
+from nltk.corpus import stopwords
+from nltk.stem import WordNetLemmatizer
+from sklearn.model_selection import train_test_split
+from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.preprocessing import LabelEncoder
+from sklearn.naive_bayes import MultinomialNB
+from sklearn.metrics import accuracy_score, classification_report
+import joblib
+from flask import Flask, request, jsonify
+
+# Load dataset
+data = pd.read_csv('Womens Clothing E-Commerce Reviews.csv')
+
+# Data cleaning
+data = data.dropna(subset=['Review Text'])
+
+# Text preprocessing
+nltk.download('stopwords')
+stop_words = set(stopwords.words('english'))
+lemmatizer = WordNetLemmatizer()
+
+def preprocess_text(text):
+    text = re.sub(r'\W', ' ', text)  # Remove non-word characters
+    text = text.lower()  # Convert to lowercase
+    text = text.split()  # Tokenize
+    text = [lemmatizer.lemmatize(word) for word in text if word not in stop_words]  # Lemmatize and remove stopwords
+    text = ' '.join(text)
+    return text
+
+data['Review Text'] = data['Review Text'].apply(preprocess_text)
+
+# Encode labels
+le = LabelEncoder()
+data['Sentiment'] = le.fit_transform(data['Recommended IND'])
+
+# Split data
+X = data['Review Text']
+y = data['Sentiment']
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Vectorize text
+vectorizer = CountVectorizer(max_features=5000)
+X_train_vec = vectorizer.fit_transform(X_train).toarray()
+X_test_vec = vectorizer.transform(X_test).toarray()
+
+# Train model
+model = MultinomialNB()
+model.fit(X_train_vec, y_train)
+
+# Predict
+y_pred = model.predict(X_test_vec)
+
+# Evaluate
+print(f'Accuracy: {accuracy_score(y_test, y_pred)}')
+print(classification_report(y_test, y_pred))
+
+# Save the model and vectorizer
+joblib.dump(model, 'model.pkl')
+joblib.dump(vectorizer, 'vectorizer.pkl')
+
+# Flask app
+app = Flask(__name__)
+
+@app.route('/predict', methods=['POST'])
+def predict():
+    data = request.get_json(force=True)
+    review = data['review']
+    review_vec = vectorizer.transform([review]).toarray()
+    prediction = model.predict(review_vec)
+    sentiment = 'Positive' if prediction[0] == 1 else 'Negative'
+    return jsonify({'sentiment': sentiment})
+
+if __name__ == '__main__':
+    app.run(port=5000, debug=True)
